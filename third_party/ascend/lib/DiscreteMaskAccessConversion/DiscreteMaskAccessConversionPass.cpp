@@ -186,8 +186,8 @@ LogicalResult isDiscreteMask(Operation *op, Value mask,
 
   MaskState mstate;
   auto isContMask = mstate.parse(mask, op->getLoc(), rewriter);
+  mstate.eraseInsertedOps(op, rewriter);
   if (!isContMask.failed()) {
-    mstate.eraseInsertedOps(op, rewriter);
     return failure();
   }
   return success();
