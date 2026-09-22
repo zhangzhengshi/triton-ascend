@@ -162,6 +162,15 @@ static llvm::StringRef getProfileOperationName(Operation *operation) {
       .Cases("math.sin", "tt.sin", "f32.sin")
       .Cases("math.cos", "tt.cos", "f32.cos")
       .Cases("tt.trans", "linalg.transpose", "f32.trans")
+      // Integer remainder is the one integer operation whose lowering cost is
+      // far from the generic issue estimate: on SIMD `arith.remsi` becomes one
+      // always-inline `vmod_int32_t` call per 64-lane chunk, measured at 112
+      // times an independent f32 vadd, while on SIMT it stays one scalar srem
+      // per lane.  Without this mapping the operation reaches neither `ops`
+      // table and contributes nothing to `compute`, so any Stage dominated by
+      // it is priced through `issue` alone and its SIMD/SIMT ratio collapses to
+      // the constant (issueWidth 64/32) * (issue rate 6.0/4.0) = 3.0.
+      .Cases("arith.remsi", "arith.remui", "i32.rem")
       .Cases("arith.extf", "arith.truncf", "arith.sitofp", "arith.uitofp",
              "convert.cast")
       .Cases("arith.fptosi", "arith.fptoui", "convert.cast")

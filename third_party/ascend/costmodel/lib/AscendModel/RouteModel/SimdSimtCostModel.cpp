@@ -220,6 +220,45 @@ static void emitPythonCanonicalJSON(const llvm::json::Value &value,
   os << value;
 }
 
+/// Operation rate keys that every profile must define.  Anything else present
+/// in a profile's `ops` block is loaded as well, which is what lets a newly
+/// mapped operation be priced by editing the profile alone.
+static constexpr llvm::StringLiteral kRequiredOperationRates[] = {
+    "f32.add",   "f32.sub",       "f32.mul",          "f32.div",
+    "f32.max",   "f32.abs",       "f32.exp",          "f32.log",
+    "f32.sin",   "f32.cos",       "f32.trans",        "predicate.cmp",
+    "predicate.select", "convert.cast", "f32.clamp"};
+
+/// Load every operation rate the profile declares, then check the required
+/// ones are present.
+///
+/// Walking a hardcoded name list instead would silently drop any other key in
+/// the profile, so a profile entry for a newly mapped operation would never
+/// reach the cost model and that operation would keep contributing nothing to
+/// `compute`.  Iterating the profile first makes the profile the single place
+/// where an operation's price is declared; the required list stays as a
+/// fail-fast check so a truncated profile is still rejected.
+static void loadOperationRates(const llvm::json::Object &ops,
+                               llvm::StringRef throughputKey,
+                               llvm::StringRef expectedUnit,
+                               const MicrobenchmarkProfile *microbench,
+                               ProfileJSONReader &reader,
+                               llvm::StringMap<StageOperationRate> &out) {
+  for (const auto &entry : ops) {
+    llvm::StringRef name = entry.first;
+    out[name] = resolveOpProfile(ops, name, throughputKey, expectedUnit,
+                                 microbench, reader);
+    if (reader.failed())
+      return;
+  }
+  for (llvm::StringLiteral name : kRequiredOperationRates)
+    if (!out.contains(name)) {
+      reader.setError("profile is missing required operation rate '" +
+                      llvm::Twine(name) + "'");
+      return;
+    }
+}
+
 static std::string resolveProfileReference(llvm::StringRef ownerPath,
                                            llvm::StringRef reference) {
   if (llvm::sys::path::is_absolute(reference))
@@ -431,13 +470,9 @@ loadCandidateProfile(llvm::StringRef requestedPath) {
       hardware.simd.setupCycles =
           reader.number(*startup, "vector", "simd.startup_system_cycles");
     if (const auto *ops = reader.object(*simd, "ops", "simd")) {
-      for (llvm::StringRef op :
-           {"f32.add", "f32.sub", "f32.mul", "f32.div", "f32.max", "f32.abs",
-            "f32.exp", "f32.log", "f32.sin", "f32.cos", "f32.trans",
-            "predicate.cmp", "predicate.select", "convert.cast", "f32.clamp"})
-        hardware.simd.operationRates[op] = resolveOpProfile(
-            *ops, op, "throughput_vector_instructions_per_system_cycle",
-            "vector_instruction/system_cycle", microbench, reader);
+      loadOperationRates(*ops, "throughput_vector_instructions_per_system_cycle",
+                         "vector_instruction/system_cycle", microbench, reader,
+                         hardware.simd.operationRates);
     }
     if (const auto *memory = reader.object(*simd, "memory", "simd")) {
       hardware.simd.loadBytesPerCycle = reader.number(
@@ -476,13 +511,9 @@ loadCandidateProfile(llvm::StringRef requestedPath) {
           microbench, reader, "simt.setup_system_cycles");
     }
     if (const auto *ops = reader.object(*simt, "ops", "simt")) {
-      for (llvm::StringRef op :
-           {"f32.add", "f32.sub", "f32.mul", "f32.div", "f32.max", "f32.abs",
-            "f32.exp", "f32.log", "f32.sin", "f32.cos", "f32.trans",
-            "predicate.cmp", "predicate.select", "convert.cast", "f32.clamp"})
-        hardware.simt.operationRates[op] =
-            resolveOpProfile(*ops, op, "throughput_scalar_ops_per_system_cycle",
-                             "scalar_op/system_cycle", microbench, reader);
+      loadOperationRates(*ops, "throughput_scalar_ops_per_system_cycle",
+                         "scalar_op/system_cycle", microbench, reader,
+                         hardware.simt.operationRates);
     }
     if (const auto *dot = reader.object(*simt, "dot", "simt")) {
       hardware.simt.dotSetupCycles =

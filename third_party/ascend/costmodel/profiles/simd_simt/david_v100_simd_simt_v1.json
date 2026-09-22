@@ -1,7 +1,7 @@
 {
   "$schema": "./simd_simt_profile_schema.json",
   "schema_version": 12,
-  "profile_version": "david-v100-simd-simt-20260915-v23",
+  "profile_version": "david-v100-simd-simt-20260922-v24",
   "target": "Ascend950PR/dav-c310",
   "description": "Stage Route Model hardware profile. Stage partitions and workloads are generated online from transformed TTIR; this file contains no workload-specific Stage template or route multiplier.",
   "microbenchmark_profile": "../microbench/ascend_davidv100_v1.json",
@@ -39,7 +39,7 @@
     "startup_system_cycles": {
       "description": "Legacy SIMD pipeline startup priors in SYS_CNT cycles. Only vector is currently consumed by Route Model scoring.",
       "vector": 21.212121,
-      "mte2": 30.303030,
+      "mte2": 30.30303,
       "mte3": 24.242424,
       "source": "Legacy selection-model seed inherited from device-cycle startup values",
       "confidence": "low",
@@ -109,6 +109,12 @@
         "relative_to": "f32.add",
         "factor": 6.0,
         "confidence": "low"
+      },
+      "i32.rem": {
+        "description": "Measured SIMD INT32 remainder cost relative to f32.add: Triton lowers arith.remsi to one always-inline vmod_int32_t call per 64-lane chunk, measured at 33.95 SYS_CNT cycles and insensitive to up to six passive live vectors. Several vmod chains active at the same time cost more per call and are not modeled; probe and numbers in microbench/data_provider/int_rem.md.",
+        "relative_to": "f32.add",
+        "factor": 112.0,
+        "confidence": "medium"
       },
       "predicate.cmp": {
         "description": "Estimated SIMD predicate-comparison cost relative to f32.add; factor multiplies the base cycle estimate.",
@@ -279,6 +285,12 @@
         "factor": 33.0,
         "confidence": "low"
       },
+      "i32.rem": {
+        "description": "Measured SIMT INT32 remainder cost relative to f32.add for a constant divisor whose result is only compared with zero, the Triton pattern (x % 7) != 0 that lowers to one scalar srem per lane: 0.90 to 0.93 across seven code layouts, cheaper than an integer add and consistent with a multiply-and-compare divisibility test. A remainder whose value is used, or a runtime divisor, is not covered; probe and numbers in microbench/data_provider/int_rem.md.",
+        "relative_to": "f32.add",
+        "factor": 0.9,
+        "confidence": "low"
+      },
       "predicate.cmp": {
         "description": "Estimated SIMT predicate-comparison cost relative to f32.add; factor multiplies the base cycle estimate.",
         "relative_to": "f32.add",
@@ -320,7 +332,7 @@
         "memory": 2.1411,
         "float_alu": 0.6429,
         "shuffle": 0.3763,
-        "predicate": 0.0380,
+        "predicate": 0.038,
         "control": 0.2431,
         "int_alu": 0.2325
       },

@@ -1,0 +1,159 @@
+// SIMD remainder cost probe. The mode is a kernel argument (host argv[1]); data path
+// as in intrin_probe4b.cce (GM seeds copied to UB by a SIMT VF, read-back by a
+// SIMT VF after timing).
+//
+// Modes, all on one s32 register a0 with the loop repeated `iters` times:
+//   0  (vadd)            x4 per iteration                    baseline
+//   1  (vadd; vmod 7)    x4 per iteration, 0 passive vectors
+//   2  same as 1 with 2 passive vectors
+//   3  same as 1 with 4 passive vectors
+//   4  same as 1 with 6 passive vectors
+// A passive vector is loaded before the loop and stored after it, and is not
+// touched inside. The Triton SIMD lowering of `lane % 7` in masked_gather keeps
+// six 64-lane data vectors alive across its vmod call; these modes ask whether
+// such values slow vmod down.
+#include "RegBase/VecUtils.h"
+#include "Vector/VecUtils.h"
+#include "Utils.h"
+
+
+constexpr int W = 64;
+
+template <typename T>
+__simt_vf__ LAUNCH_BOUND(1024) __aiv__ __attribute__((always_inline)) static void
+seed_vf(__gm__ T *gm, __ubuf__ T *ub) {
+  int tid = threadIdx.y * 32 + threadIdx.x;
+  if (tid >= 640) return;
+  int slot = tid / 64;
+  int lane = tid - slot * 64;
+  int dst = 0;
+  if (slot < 4) dst = (4 + slot) * 64;
+  else if (slot == 4) dst = 12 * 64;
+  else if (slot < 9) dst = (slot - 5) * 64;
+  else dst = 13 * 64;
+  ub[dst + lane] = gm[tid];
+}
+
+template <typename T>
+__simt_vf__ LAUNCH_BOUND(1024) __aiv__ __attribute__((always_inline)) static void
+readback_vf(__gm__ T *gm, __ubuf__ T *ub) {
+  int tid = threadIdx.y * 32 + threadIdx.x;
+  if (tid >= 64) return;
+  gm[640 + tid] = ub[4 * 64 + tid];
+}
+
+extern "C" __global__ [aicore] void measure(__gm__ long long *out, __gm__ int32_t *gm, int K, int a, int b, int iters, int mode) {
+  (void)a; (void)b;
+  auto ib = reinterpret_cast<__ubuf__ int32_t *>(0);
+  uint16_t it_n = (uint16_t)iters;
+
+  cce::async_invoke<seed_vf<int32_t>>(cce::dim3{32, 20, 1}, gm, ib);
+  pipe_barrier(PIPE_ALL);
+  pipe_barrier(PIPE_ALL);
+  long long t0 = get_sys_cnt();
+  for (int k = 0; k < K; k++) {
+  if (mode == 0) {
+    __VEC_SCOPE__ {
+      uint32_t cnt = (uint32_t)W;
+      vector_bool m;
+      CREATE_MASK_BY_SIZE(m, int32_t, cnt);
+      VectorReg<int32_t> kk, d7, a0;
+      vlds(kk, ib + 12 * W, 0, NORM);
+      vlds(a0, ib + 4 * W, 0, NORM);
+      vdup(d7, (int32_t)7, m, __cce_simd::MODE_ZEROING);
+      for (uint16_t r = 0; r < it_n; r++) {
+        vadd(a0,a0,kk,m); vadd(a0,a0,kk,m); vadd(a0,a0,kk,m); vadd(a0,a0,kk,m);
+      }
+      vsts(a0, ib + 4 * W, 0, NORM_B32, m);
+    }
+  }
+  if (mode == 1) {
+    __VEC_SCOPE__ {
+      uint32_t cnt = (uint32_t)W;
+      vector_bool m;
+      CREATE_MASK_BY_SIZE(m, int32_t, cnt);
+      VectorReg<int32_t> kk, d7, a0;
+      vlds(kk, ib + 12 * W, 0, NORM);
+      vlds(a0, ib + 4 * W, 0, NORM);
+      vdup(d7, (int32_t)7, m, __cce_simd::MODE_ZEROING);
+      for (uint16_t r = 0; r < it_n; r++) {
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+      }
+      vsts(a0, ib + 4 * W, 0, NORM_B32, m);
+    }
+  }
+  if (mode == 2) {
+    __VEC_SCOPE__ {
+      uint32_t cnt = (uint32_t)W;
+      vector_bool m;
+      CREATE_MASK_BY_SIZE(m, int32_t, cnt);
+      VectorReg<int32_t> kk, d7, a0;
+      vlds(kk, ib + 12 * W, 0, NORM);
+      vlds(a0, ib + 4 * W, 0, NORM);
+      vdup(d7, (int32_t)7, m, __cce_simd::MODE_ZEROING);
+      VectorReg<int32_t> p0, p1;
+      vlds(p0, ib + 14 * W, 0, NORM); vlds(p1, ib + 15 * W, 0, NORM);
+      for (uint16_t r = 0; r < it_n; r++) {
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+      }
+      vsts(p0, ib + 14 * W, 0, NORM_B32, m); vsts(p1, ib + 15 * W, 0, NORM_B32, m);
+      vsts(a0, ib + 4 * W, 0, NORM_B32, m);
+    }
+  }
+  if (mode == 3) {
+    __VEC_SCOPE__ {
+      uint32_t cnt = (uint32_t)W;
+      vector_bool m;
+      CREATE_MASK_BY_SIZE(m, int32_t, cnt);
+      VectorReg<int32_t> kk, d7, a0;
+      vlds(kk, ib + 12 * W, 0, NORM);
+      vlds(a0, ib + 4 * W, 0, NORM);
+      vdup(d7, (int32_t)7, m, __cce_simd::MODE_ZEROING);
+      VectorReg<int32_t> p0, p1;
+      vlds(p0, ib + 14 * W, 0, NORM); vlds(p1, ib + 15 * W, 0, NORM);
+      VectorReg<int32_t> p2, p3;
+      vlds(p2, ib + 16 * W, 0, NORM); vlds(p3, ib + 17 * W, 0, NORM);
+      for (uint16_t r = 0; r < it_n; r++) {
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+      }
+      vsts(p0, ib + 14 * W, 0, NORM_B32, m); vsts(p1, ib + 15 * W, 0, NORM_B32, m);
+      vsts(p2, ib + 16 * W, 0, NORM_B32, m); vsts(p3, ib + 17 * W, 0, NORM_B32, m);
+      vsts(a0, ib + 4 * W, 0, NORM_B32, m);
+    }
+  }
+  if (mode == 4) {
+    __VEC_SCOPE__ {
+      uint32_t cnt = (uint32_t)W;
+      vector_bool m;
+      CREATE_MASK_BY_SIZE(m, int32_t, cnt);
+      VectorReg<int32_t> kk, d7, a0;
+      vlds(kk, ib + 12 * W, 0, NORM);
+      vlds(a0, ib + 4 * W, 0, NORM);
+      vdup(d7, (int32_t)7, m, __cce_simd::MODE_ZEROING);
+      VectorReg<int32_t> p0, p1;
+      vlds(p0, ib + 14 * W, 0, NORM); vlds(p1, ib + 15 * W, 0, NORM);
+      VectorReg<int32_t> p2, p3;
+      vlds(p2, ib + 16 * W, 0, NORM); vlds(p3, ib + 17 * W, 0, NORM);
+      VectorReg<int32_t> p4, p5;
+      vlds(p4, ib + 18 * W, 0, NORM); vlds(p5, ib + 19 * W, 0, NORM);
+      for (uint16_t r = 0; r < it_n; r++) {
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+        vadd(a0,a0,kk,m); vmod(a0,a0,d7,m); vadd(a0,a0,kk,m); vmod(a0,a0,d7,m);
+      }
+      vsts(p0, ib + 14 * W, 0, NORM_B32, m); vsts(p1, ib + 15 * W, 0, NORM_B32, m);
+      vsts(p2, ib + 16 * W, 0, NORM_B32, m); vsts(p3, ib + 17 * W, 0, NORM_B32, m);
+      vsts(p4, ib + 18 * W, 0, NORM_B32, m); vsts(p5, ib + 19 * W, 0, NORM_B32, m);
+      vsts(a0, ib + 4 * W, 0, NORM_B32, m);
+    }
+  }
+    pipe_barrier(PIPE_ALL);
+  }
+  long long t1 = get_sys_cnt();
+  pipe_barrier(PIPE_ALL);
+  out[0] = t1 - t0;
+  cce::async_invoke<readback_vf<int32_t>>(cce::dim3{32, 2, 1}, gm, ib);
+  pipe_barrier(PIPE_ALL);
+}

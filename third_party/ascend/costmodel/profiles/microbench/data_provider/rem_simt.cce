@@ -1,0 +1,106 @@
+// SIMT remainder cost probe: the price of one `% 7` whose result is only
+// compared with zero, which is what Triton's `(lane % 7) != 0` lowers to.
+//
+// Launch shape follows tput.cce's SIMT mode: 32x32 threads, a runtime-length
+// loop, cycles measured by slope over iteration count. Two modes, selected at
+// runtime by the host (argv[1]); mode 1 minus mode 0 is the remainder cost:
+//
+//   0  hash of 8 per-lane terms `x != 0`
+//   1  same with `(x % 7) != 0`
+//
+// The dividend x is built like the Triton lane index (a masked, shifted index
+// xor a per-lane constant, known non-negative), so the backend is free to use
+// a divisibility test rather than a full remainder - which is what the numbers
+// say it does. A remainder whose value is used, or a runtime divisor, is a
+// different case and is not measured here.
+//
+// The f32 add this cost is expressed against comes from tput.cce.
+#include "RegBase/VecUtils.h"
+#include "Vector/VecUtils.h"
+#include "Utils.h"
+
+using GT = uint32_t;
+
+#if defined(__DAV_C310__)
+template <typename T>
+__simt_vf__ LAUNCH_BOUND(1024) __aiv__ __attribute__((always_inline)) static void
+copy_vf(__gm__ T *gm, __ubuf__ T *ub) {
+  int tid = threadIdx.y * 32 + threadIdx.x;
+  gm[tid] = ub[tid];
+}
+
+// USE_REM picks the term; everything else is identical between the two modes,
+// so the difference is one remainder-by-7 tested for zero per term.
+template <bool USE_REM>
+__simt_vf__ LAUNCH_BOUND(1024) __aiv__ __attribute__((always_inline)) static void
+rem_vf(__ubuf__ GT *dst, int nlane, int nwarp, int iters) {
+  int lane = threadIdx.x;
+  int warp = threadIdx.y;
+  if (lane >= nlane || warp >= nwarp) return;
+  int tid = warp * 32 + lane;
+  GT b = (GT)(lane + warp + 1);
+  int32_t base = (int32_t)(b * 37u);
+#define REM_X(j) ((int32_t)((((uint32_t)(i + (j)) & 31u) << 2) ^ (uint32_t)((base + 101 * (j)) & 1023)))
+  // Seeding the hash with `base` keeps read-back distinct per thread; without
+  // it mode 0's terms are almost always 1 and only 15 values come back.
+  GT h = (GT)(uint32_t)base;
+  for (int i = 0; i < iters; i++) {
+    GT s;
+    if constexpr (USE_REM) {
+      s = (GT)((REM_X(0) % 7) != 0) + (GT)((REM_X(1) % 7) != 0) +
+          (GT)((REM_X(2) % 7) != 0) + (GT)((REM_X(3) % 7) != 0) +
+          (GT)((REM_X(4) % 7) != 0) + (GT)((REM_X(5) % 7) != 0) +
+          (GT)((REM_X(6) % 7) != 0) + (GT)((REM_X(7) % 7) != 0);
+    } else {
+      s = (GT)(REM_X(0) != 0) + (GT)(REM_X(1) != 0) +
+          (GT)(REM_X(2) != 0) + (GT)(REM_X(3) != 0) +
+          (GT)(REM_X(4) != 0) + (GT)(REM_X(5) != 0) +
+          (GT)(REM_X(6) != 0) + (GT)(REM_X(7) != 0);
+    }
+    h = h * 3u + s;
+  }
+#undef REM_X
+  dst[tid] = h;
+}
+#endif
+
+#define LAUNCH_TIMED_VF(ub, iters, mode)                                        \
+  do {                                                                          \
+    if ((mode) == 0)                                                            \
+      cce::async_invoke<rem_vf<false>>(cce::dim3{32, 32, 1}, ub, 32, 32, iters); \
+    else                                                                        \
+      cce::async_invoke<rem_vf<true>>(cce::dim3{32, 32, 1}, ub, 32, 32, iters);  \
+  } while (0)
+
+// Timing entry. No __gm__ pointer is ever handed to a VF here: having such a
+// launch anywhere in this function, even on a branch timing never takes, made
+// the timed loop about 10% slower.
+extern "C" __global__ [aicore] void measure(__gm__ long long *out, __gm__ GT *gm,
+                                            int K, int iters, uint32_t mode,
+                                            uint32_t unused1, int unused2) {
+  auto ub = reinterpret_cast<__ubuf__ GT *>(0);
+  (void)gm; (void)unused1; (void)unused2;
+  pipe_barrier(PIPE_ALL);
+  long long t0 = get_sys_cnt();
+  for (int i = 0; i < K; i++) {
+    LAUNCH_TIMED_VF(ub, iters, mode);
+    pipe_barrier(PIPE_ALL);
+  }
+  long long t1c = get_sys_cnt();
+  pipe_barrier(PIPE_ALL);
+  out[0] = t1c - t0;
+}
+
+// Verification entry: one launch of the same timed VF, then UB -> GM copy.
+extern "C" __global__ [aicore] void verify(__gm__ long long *out, __gm__ GT *gm,
+                                           int K, int iters, uint32_t mode,
+                                           uint32_t unused1, int unused2) {
+  auto ub = reinterpret_cast<__ubuf__ GT *>(0);
+  (void)K; (void)unused1; (void)unused2;
+  pipe_barrier(PIPE_ALL);
+  LAUNCH_TIMED_VF(ub, iters, mode);
+  pipe_barrier(PIPE_ALL);
+  cce::async_invoke<copy_vf<GT>>(cce::dim3{32, 32, 1}, gm, ub);
+  pipe_barrier(PIPE_ALL);
+  out[0] = 0;
+}

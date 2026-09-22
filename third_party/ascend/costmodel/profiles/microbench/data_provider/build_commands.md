@@ -45,9 +45,14 @@ g++ -O2 "${name}_host.cpp" -o "${name}_host" \
 | `triton_cases/SIMT_Test/simt_gm_memory_david_v100_20260725.csv` | `simt_gm_memory.cce`, `simt_gm_memory_host.cpp` | SIMT GM load/store throughput and bandwidth |
 | `triton_cases/SIMT_Test/simt_shuffle_david_v100_20260725.csv` | `simt_shuffle.cce`, `simt_shuffle_host.cpp` | SIMT shuffle throughput and dependent latency |
 | `simt_transition_microbench_tail16_barrier_20260713.txt` | `transition.cce`, `transition_host.cpp`, `run_transition.remote.sh` | SIMT transition harness setup proxies |
+| `int_rem.md` (relative factors, not shared measurements) | `rem_simd.cce`, `rem_simd_host.cpp`, `rem_simt.cce`, `rem_simt_host.cpp` | `simd.ops.i32.rem`, `simt.ops.i32.rem` |
 
 `build_and_run.sh` sources `/data/kaixin/set_env.sh` or `/home/kaixin/set_env.sh`,
 then builds `<name>.cce -> <name>.o` and `<name>_host.cpp -> <name>_host`.
+
+The `rem_simd` / `rem_simt` probes take the mode as a kernel argument, so
+`build_and_run.sh` builds them like any other probe and running
+`./rem_simd_host <mode>` selects the mode; see `int_rem.md`.
 
 ## CAModel / msopprof simulator
 
