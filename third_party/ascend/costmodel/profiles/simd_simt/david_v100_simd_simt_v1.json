@@ -1,7 +1,7 @@
 {
   "$schema": "./simd_simt_profile_schema.json",
   "schema_version": 12,
-  "profile_version": "david-v100-simd-simt-20260918-v27-segmented-issue-fixed-transition",
+  "profile_version": "david-v100-simd-simt-20261010-basic-arithmetic",
   "target": "Ascend950PR/dav-c310",
   "description": "Stage Route Model hardware profile. Stage partitions and workloads are generated online from transformed TTIR; this file contains no workload-specific Stage template or route multiplier.",
   "microbenchmark_profile": "../microbench/ascend_davidv100_v1.json",
@@ -47,19 +47,19 @@
     },
     "ops": {
       "f32.add": {
-        "description": "Measured FP32 SIMD add base throughput resolved from the shared microbenchmark profile.",
-        "throughput_measurement": "simd.f32.add.throughput"
+        "description": "Measured FP32 SIMD add cost with eight independent chains and one target per chain per iteration; 64 lanes per vector. Factor calibrates ADD while preserving the shared reference for other operations.",
+        "throughput_measurement": "simd.f32.add.throughput",
+        "factor": 0.9999528,
+        "confidence": "medium"
       },
       "f32.sub": {
-        "description": "Estimated FP32 SIMD subtract cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.0,
+        "description": "Measured FP32 SIMD sub cost with eight independent chains and one target per chain per iteration; 64 lanes per vector.",
+        "throughput_vector_instructions_per_system_cycle": 3.3011798416754146,
         "confidence": "medium"
       },
       "f32.mul": {
-        "description": "Estimated FP32 SIMD multiply cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.0,
+        "description": "Measured FP32 SIMD mul cost with eight independent chains and one target per chain per iteration; 64 lanes per vector.",
+        "throughput_vector_instructions_per_system_cycle": 3.29930648577669,
         "confidence": "medium"
       },
       "f32.div": {
@@ -69,9 +69,8 @@
         "confidence": "low"
       },
       "f32.max": {
-        "description": "Estimated FP32 SIMD maximum cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.2,
+        "description": "Measured FP32 SIMD max cost with eight independent chains and one target per chain per iteration; 64 lanes per vector.",
+        "throughput_vector_instructions_per_system_cycle": 3.30084204480563,
         "confidence": "medium"
       },
       "f32.abs": {
@@ -216,19 +215,19 @@
     },
     "ops": {
       "f32.add": {
-        "description": "Measured FP32 SIMT scalar-add base throughput resolved from the shared microbenchmark profile.",
-        "throughput_measurement": "simt.f32.add.throughput"
+        "description": "Measured FP32 SIMT add cost with eight independent chains and one target per chain per iteration; 32 requested warps. Factor calibrates ADD while preserving the shared reference for other operations.",
+        "throughput_measurement": "simt.f32.add.throughput",
+        "factor": 1.345537078857422,
+        "confidence": "medium"
       },
       "f32.sub": {
-        "description": "Estimated FP32 SIMT subtract cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.0,
+        "description": "Measured FP32 SIMT sub cost with eight independent chains and one target per chain per iteration; 32 requested warps.",
+        "throughput_scalar_ops_per_system_cycle": 102.37512604359411,
         "confidence": "medium"
       },
       "f32.mul": {
-        "description": "Estimated FP32 SIMT multiply cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.0,
+        "description": "Measured FP32 SIMT mul cost with eight independent chains and one target per chain per iteration; 32 requested warps.",
+        "throughput_scalar_ops_per_system_cycle": 101.6590800331025,
         "confidence": "medium"
       },
       "f32.div": {
@@ -238,9 +237,8 @@
         "confidence": "low"
       },
       "f32.max": {
-        "description": "Estimated FP32 SIMT maximum cost relative to f32.add; factor multiplies the base cycle estimate.",
-        "relative_to": "f32.add",
-        "factor": 1.2,
+        "description": "Measured FP32 SIMT max cost with eight independent chains and one target per chain per iteration; 32 requested warps.",
+        "throughput_scalar_ops_per_system_cycle": 112.65465390615265,
         "confidence": "medium"
       },
       "f32.abs": {
